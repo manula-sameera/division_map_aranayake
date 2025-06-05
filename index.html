@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Map Aranayake</title>
+    <style>        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
+            display: flex;
+            height: 100vh;
+        }
+        .map-container {
+            flex: 2; /* Map takes more space */
+            height: 100vh;
+            border-right: 1px solid #ccc;
+            overflow: hidden; /* Important for SVG zoom/pan */
+            position: relative;
+        }
+        #myMapObject {
+            width: 100%;
+            height: 100%;
+            display: block;
+            cursor: grab;
+        }
+        #myMapObject:active {
+            cursor: grabbing;
+        }
+        #myMapObject svg {
+            width: 100%;
+            height: 100%;
+            transition: transform 0.1s ease-out;
+        }        .info-container {
+            flex: 1; /* Info takes less space */
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            background: #fff;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        #mapTooltip {
+            position: absolute;
+            background-color: rgba(0, 0, 0, 0.75);
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            pointer-events: none; /* So it doesn't interfere with map events */
+            display: none; /* Initially hidden */
+            white-space: nowrap;
+        }
+        #mapDescription {
+            padding: 10px;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            min-height: 50px;
+            background-color: #f9f9f9;
+        }
+        .chart-wrapper {
+            flex-grow: 1; /* Chart takes remaining space in info-container */
+            min-height: 250px; /* Minimum height for the chart */
+            border: 1px solid #eee;
+            border-radius: 4px;
+            padding: 10px;
+        }
+        #mapChart {
+            width: 100%;
+            height: 100%;
+        }        #mapLegend {
+            margin-top: 15px;
+            padding: 10px;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            background-color: #f9f9f9;
+        }
+        /* Zoom controls */
+        .zoom-controls {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            z-index: 1000;
+        }
+        .zoom-btn {
+            width: 40px;
+            height: 40px;
+            background: rgba(255, 255, 255, 0.9);
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            font-weight: bold;
+            user-select: none;
+            transition: background-color 0.2s;
+        }
+        .zoom-btn:hover {
+            background: rgba(255, 255, 255, 1);
+        }
+        /* Basic SVG styling if not embedded in object, or for direct SVG */
+        #myMapObject svg path[data-id], svg path[data-id] { /* Target paths in object or direct SVG */
+             stroke: black;
+             stroke-width: 0.5;
+             transition: fill 0.3s ease, stroke-width 0.3s ease;
+        }
+        #myMapObject svg path[data-id]:hover, svg path[data-id]:hover {
+            cursor: pointer;
+            filter: brightness(1.2);
+        }
+    </style>
+</head>
+<body><    <div class="map-container">
+        <!-- Zoom controls -->
+        <div class="zoom-controls">
+            <div class="zoom-btn" id="zoomIn">+</div>
+            <div class="zoom-btn" id="zoomOut">−</div>
+            <div class="zoom-btn" id="zoomReset">⌂</div>
+        </div>
+        <!--
+            IMPORTANT:
+            Your SVG map should have elements (paths, polylines, etc.)
+            each with an 'id' attribute. The value of 'id'
+            must correspond to the 'id' column in your Google Sheet.
+            For example: <path id="region1" d="..."></path>
+        -->
+        <div id="myMapObject" style="width: 100%; height: 100%;">
+            <!-- SVG will be loaded here dynamically to avoid CORS issues -->
+            Loading map...
+        </div>
+    </div>
+
+    <div class="info-container">
+        <div id="mapDescription">
+            Click on a map region to see details.
+        </div>
+        <div class="chart-wrapper">
+            <canvas id="mapChart"></canvas>
+        </div>
+         <div id="mapLegend">
+            Legend will appear here.
+        </div>
+    </div>
+
+    <div id="mapTooltip"></div>
+
+    <!-- Library Dependencies -->
+    <!-- 1. SheetJS (xlsx) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- 2. Chart.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <!-- Note: Chart.js v3 and above doesn't need a separate datalabels plugin for basic tooltips -->
+
+    <!-- Your InteractiveMapLibrary (save the JS code above as interactiveMapLib.js) -->
+    <script src="interactiveMapLib.js"></script>    <script>
+        // SVG Zoom and Pan functionality
+        let currentScale = 1;
+        let currentX = 0;
+        let currentY = 0;
+        let isDragging = false;
+        let dragStart = { x: 0, y: 0 };
+
+        function initializeZoomPan() {
+            const mapContainer = document.getElementById('myMapObject');
+            const svg = mapContainer.querySelector('svg');
+            
+            if (!svg) return;
+
+            // Mouse wheel zoom
+            mapContainer.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const rect = mapContainer.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                const delta = e.deltaY > 0 ? 0.9 : 1.1;
+                const newScale = Math.max(0.5, Math.min(5, currentScale * delta));
+                
+                if (newScale !== currentScale) {
+                    const scaleChange = newScale / currentScale;
+                    currentX = mouseX - (mouseX - currentX) * scaleChange;
+                    currentY = mouseY - (mouseY - currentY) * scaleChange;
+                    currentScale = newScale;
+                    updateTransform(svg);
+                }
+            });
+
+            // Mouse drag pan
+            mapContainer.addEventListener('mousedown', (e) => {
+                isDragging = true;
+                dragStart.x = e.clientX - currentX;
+                dragStart.y = e.clientY - currentY;
+                mapContainer.style.cursor = 'grabbing';
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (isDragging) {
+                    currentX = e.clientX - dragStart.x;
+                    currentY = e.clientY - dragStart.y;
+                    updateTransform(svg);
+                }
+            });
+
+            document.addEventListener('mouseup', () => {
+                isDragging = false;
+                mapContainer.style.cursor = 'grab';
+            });
+
+            // Zoom controls
+            document.getElementById('zoomIn').addEventListener('click', () => {
+                const newScale = Math.min(5, currentScale * 1.2);
+                if (newScale !== currentScale) {
+                    const centerX = mapContainer.offsetWidth / 2;
+                    const centerY = mapContainer.offsetHeight / 2;
+                    const scaleChange = newScale / currentScale;
+                    currentX = centerX - (centerX - currentX) * scaleChange;
+                    currentY = centerY - (centerY - currentY) * scaleChange;
+                    currentScale = newScale;
+                    updateTransform(svg);
+                }
+            });
+
+            document.getElementById('zoomOut').addEventListener('click', () => {
+                const newScale = Math.max(0.5, currentScale * 0.8);
+                if (newScale !== currentScale) {
+                    const centerX = mapContainer.offsetWidth / 2;
+                    const centerY = mapContainer.offsetHeight / 2;
+                    const scaleChange = newScale / currentScale;
+                    currentX = centerX - (centerX - currentX) * scaleChange;
+                    currentY = centerY - (centerY - currentY) * scaleChange;
+                    currentScale = newScale;
+                    updateTransform(svg);
+                }
+            });
+
+            document.getElementById('zoomReset').addEventListener('click', () => {
+                currentScale = 1;
+                currentX = 0;
+                currentY = 0;
+                updateTransform(svg);
+            });
+        }
+
+        function updateTransform(svg) {
+            if (svg) {
+                svg.style.transform = `translate(${currentX}px, ${currentY}px) scale(${currentScale})`;
+            }
+        }
+
+        // Observer to initialize zoom when SVG is loaded
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                if (mutation.type === 'childList') {
+                    const svg = document.querySelector('#myMapObject svg');
+                    if (svg) {
+                        initializeZoomPan();
+                        observer.disconnect();
+                    }
+                }
+            });
+        });
+
+        observer.observe(document.getElementById('myMapObject'), {
+            childList: true,
+            subtree: true
+        });
+    </script>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // IMPORTANT: Replace this with YOUR Google Sheet URL.
+            // It must be published to the web and the link should end with '/export?format=xlsx'
+            const googleSheetUrl = 'https://docs.google.com/spreadsheets/d/1cyVYV4aYNHgHyybJBJcp8nHVnrp_ExnT8nk0_C3aG28/export?format=xlsx';
+            // Example: const googleSheetUrl = 'https://docs.google.com/spreadsheets/d/your_sheet_id/export?format=xlsx';
+
+            // if (googleSheetUrl === 'https://docs.google.com/spreadsheets/d/1cyVYV4aYNHgHyybJBJcp8nHVnrp_ExnT8nk0_C3aG28/export?format=xlsx') {
+            //     alert("Please update the googleSheetUrl in the script with your actual Google Sheet link!");
+            //     document.getElementById('mapDescription').innerHTML =
+            //      '<p style="color:red; font-weight:bold;">Configuration Needed: Please update the <code>googleSheetUrl</code> in the HTML script block with your actual Google Sheet link.</p>';
+            //     return;
+            // }
+
+            const mapInstance = new InteractiveMapLibrary({
+                mapElementId: 'myMapObject',
+                tooltipElementId: 'mapTooltip',
+                chartCanvasId: 'mapChart',
+                descriptionElementId: 'mapDescription',
+                legendElementId: 'mapLegend',
+                googleSheetUrl: googleSheetUrl,
+                // Optional:
+                // sheetName: 'MyDataSheet', // If your data is not in the first sheet
+                // data1Label: 'Population',
+                // data2Label: 'GDP (Millions)'
+            });
+        });
+    </script>
+</body>
+</html>
