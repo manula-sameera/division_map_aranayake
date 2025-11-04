@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF E-Book Reader</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+            background: #2c2c2c;
+        }
+
+        #pdf-container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            perspective: 2000px;
+            position: relative;
+            overflow: auto;
+            padding-top: 20px;
+        }
+
+        #canvas-wrapper {
+            position: relative;
+            box-shadow: 0 10px 50px rgba(0, 0, 0, 0.5);
+            display: flex;
+            gap: 20px;
+            padding: 20px;
+        }
+
+        canvas {
+            display: block;
+            background: white;
+        }
+
+        .single-page canvas {
+            margin: auto;
+        }
+
+        .page-turn-animation {
+            animation: pageTurn 0.6s ease-in-out;
+        }
+
+        @keyframes pageTurn {
+            0% {
+                transform: rotateY(0deg);
+                opacity: 1;
+            }
+            50% {
+                transform: rotateY(-90deg);
+                opacity: 0.5;
+            }
+            100% {
+                transform: rotateY(0deg);
+                opacity: 1;
+            }
+        }
+
+        .control-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 12px 20px;
+            backdrop-filter: blur(10px);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            transform: translateY(100%);
+            transition: transform 0.3s ease;
+        }
+
+        .control-bar.visible {
+            transform: translateY(0);
+        }
+
+        .control-bar:hover {
+            transform: translateY(0);
+        }
+
+        .control-group {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        button {
+            background: rgba(255, 255, 255, 0.9);
+            border: none;
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            color: #333;
+        }
+
+        button:hover {
+            background: white;
+            transform: scale(1.05);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: scale(1);
+        }
+
+        .icon-btn {
+            width: 32px;
+            height: 32px;
+            padding: 0;
+            border-radius: 50%;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .layout-btn.active {
+            background: rgba(74, 144, 226, 0.9);
+            color: white;
+        }
+
+        #download-btn {
+            background: rgba(74, 144, 226, 0.9);
+            color: white;
+        }
+
+        #download-btn:hover {
+            background: rgba(74, 144, 226, 1);
+        }
+
+        #page-info, #zoom-level {
+            color: white;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 0 8px;
+            min-width: 50px;
+            text-align: center;
+        }
+
+        .divider {
+            width: 1px;
+            height: 30px;
+            background: rgba(255, 255, 255, 0.3);
+            margin: 0 5px;
+        }
+
+        #bottom-trigger {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 80px;
+            z-index: 999;
+            pointer-events: none;
+        }
+
+        #loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+            z-index: 999;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        /* Arrow key navigation hint */
+        #nav-hint {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 13px;
+            text-align: center;
+            z-index: 999;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px 20px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+            opacity: 1;
+            transition: opacity 0.5s ease;
+        }
+
+        #nav-hint.fade-out {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        #pdf-container.dragging {
+            cursor: grabbing;
+        }
+
+        #canvas-wrapper {
+            cursor: grab;
+        }
+
+        #canvas-wrapper.dragging {
+            cursor: grabbing;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">Loading PDF...</div>
+    
+    <div id="pdf-container">
+        <div id="canvas-wrapper" class="single-page">
+            <canvas id="pdf-canvas"></canvas>
+            <canvas id="pdf-canvas-2" style="display: none;"></canvas>
+        </div>
+    </div>
+
+    <div id="nav-hint" class="hidden">
+        Use arrow keys (← →) or hover bottom edge to show controls
+    </div>
+
+    <div id="bottom-trigger"></div>
+
+    <div class="control-bar hidden" id="control-bar">
+        <div class="control-group">
+            <button class="icon-btn" id="zoom-out" onclick="zoomOut()" title="Zoom Out">−</button>
+            <span id="zoom-level">100%</span>
+            <button class="icon-btn" id="zoom-in" onclick="zoomIn()" title="Zoom In">+</button>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="control-group">
+            <button class="icon-btn layout-btn active" id="single-page-btn" onclick="setSinglePage()" title="Single Page">📄</button>
+            <button class="icon-btn layout-btn" id="double-page-btn" onclick="setDoublePage()" title="Double Page">📖</button>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="control-group">
+            <button id="prev-btn" onclick="previousPage()">← Prev</button>
+            <span id="page-info"></span>
+            <button id="next-btn" onclick="nextPage()">Next →</button>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="control-group">
+            <button id="download-btn" onclick="downloadPDF()">📥 Download</button>
+        </div>
+    </div>
+
+    <script>
+        // PDF.js configuration
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        let pdfDoc = null;
+        let pageNum = 1;
+        let pageRendering = false;
+        let pageNumPending = null;
+        let scale = 1;
+        let baseScale = 1; // Store the base scale for zoom calculations
+        let zoomLevel = 1; // Current zoom multiplier
+        let isDoublePage = false; // Layout mode
+        const canvas = document.getElementById('pdf-canvas');
+        const canvas2 = document.getElementById('pdf-canvas-2');
+        const ctx = canvas.getContext('2d');
+        const ctx2 = canvas2.getContext('2d');
+        let pdfUrl = ''; // Will store the PDF URL or base64 data
+
+        // Mouse drag variables
+        let isDragging = false;
+        let startX, startY, scrollLeft, scrollTop;
+
+        // Replace this with your PDF URL or upload mechanism
+        const PDF_URL = 'aa.pdf'; // <-- CHANGE THIS TO YOUR PDF URL
+
+        // Alternative: Load PDF from file input
+        function loadPDFFromInput() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'application/pdf';
+            input.onchange = (e) => {
+                const file = e.target.files[0];
+                if (file && file.type === 'application/pdf') {
+                    const reader = new FileReader();
+                    reader.onload = function(event) {
+                        pdfUrl = event.target.result;
+                        initPDF(event.target.result);
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+            input.click();
+        }
+
+        // Initialize PDF
+        function initPDF(url) {
+            const loadingTask = pdfjsLib.getDocument(url);
+            loadingTask.promise.then(function(pdf) {
+                pdfDoc = pdf;
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('control-bar').classList.remove('hidden');
+                document.getElementById('nav-hint').classList.remove('hidden');
+                
+                // Auto-show controls briefly on load
+                document.getElementById('control-bar').classList.add('visible');
+                setTimeout(() => {
+                    document.getElementById('control-bar').classList.remove('visible');
+                }, 3000);
+                
+                // Auto-hide hint after 5 seconds
+                setTimeout(() => {
+                    document.getElementById('nav-hint').classList.add('fade-out');
+                }, 5000);
+                
+                renderPage(pageNum);
+            }).catch(function(error) {
+                console.error('Error loading PDF:', error);
+                document.getElementById('loading').textContent = 'Error loading PDF. Click to select a PDF file.';
+                document.getElementById('loading').style.cursor = 'pointer';
+                document.getElementById('loading').onclick = loadPDFFromInput;
+            });
+        }
+
+        // Render page
+        function renderPage(num) {
+            pageRendering = true;
+            
+            if (isDoublePage) {
+                renderDoublePage(num);
+            } else {
+                renderSinglePage(num);
+            }
+        }
+
+        function renderSinglePage(num) {
+            pdfDoc.getPage(num).then(function(page) {
+                // Calculate scale to fit screen
+                const viewport = page.getViewport({ scale: 1 });
+                const windowWidth = window.innerWidth;
+                const windowHeight = window.innerHeight;
+                
+                const scaleX = (windowWidth * 0.95) / viewport.width;
+                const scaleY = (windowHeight * 0.95) / viewport.height;
+                baseScale = Math.min(scaleX, scaleY);
+                scale = baseScale * zoomLevel;
+
+                const scaledViewport = page.getViewport({ scale: scale });
+                canvas.height = scaledViewport.height;
+                canvas.width = scaledViewport.width;
+
+                // Add page turn animation
+                const canvasWrapper = document.getElementById('canvas-wrapper');
+                canvasWrapper.classList.add('page-turn-animation');
+                
+                setTimeout(() => {
+                    canvasWrapper.classList.remove('page-turn-animation');
+                }, 600);
+
+                const renderContext = {
+                    canvasContext: ctx,
+                    viewport: scaledViewport
+                };
+
+                const renderTask = page.render(renderContext);
+                renderTask.promise.then(function() {
+                    pageRendering = false;
+                    if (pageNumPending !== null) {
+                        renderPage(pageNumPending);
+                        pageNumPending = null;
+                    }
+                });
+            });
+
+            updatePageInfo();
+        }
+
+        function renderDoublePage(num) {
+            const canvasWrapper = document.getElementById('canvas-wrapper');
+            canvasWrapper.classList.add('page-turn-animation');
+            
+            setTimeout(() => {
+                canvasWrapper.classList.remove('page-turn-animation');
+            }, 600);
+
+            // Render first page
+            pdfDoc.getPage(num).then(function(page) {
+                const viewport = page.getViewport({ scale: 1 });
+                const windowWidth = window.innerWidth;
+                const windowHeight = window.innerHeight;
+                
+                // Calculate scale for double page (two pages side by side)
+                const scaleX = (windowWidth * 0.45) / viewport.width;
+                const scaleY = (windowHeight * 0.95) / viewport.height;
+                baseScale = Math.min(scaleX, scaleY);
+                scale = baseScale * zoomLevel;
+
+                const scaledViewport = page.getViewport({ scale: scale });
+                canvas.height = scaledViewport.height;
+                canvas.width = scaledViewport.width;
+
+                const renderContext = {
+                    canvasContext: ctx,
+                    viewport: scaledViewport
+                };
+
+                return page.render(renderContext).promise;
+            }).then(function() {
+                // Render second page if available
+                if (num < pdfDoc.numPages) {
+                    return pdfDoc.getPage(num + 1).then(function(page) {
+                        const scaledViewport = page.getViewport({ scale: scale });
+                        canvas2.height = scaledViewport.height;
+                        canvas2.width = scaledViewport.width;
+
+                        const renderContext = {
+                            canvasContext: ctx2,
+                            viewport: scaledViewport
+                        };
+
+                        return page.render(renderContext).promise;
+                    });
+                }
+            }).then(function() {
+                pageRendering = false;
+                if (pageNumPending !== null) {
+                    renderPage(pageNumPending);
+                    pageNumPending = null;
+                }
+            });
+
+            updatePageInfo();
+        }
+
+        function updatePageInfo() {
+            if (isDoublePage) {
+                const endPage = Math.min(pageNum + 1, pdfDoc.numPages);
+                document.getElementById('page-info').textContent = `Pages ${pageNum}-${endPage} of ${pdfDoc.numPages}`;
+            } else {
+                document.getElementById('page-info').textContent = `Page ${pageNum} of ${pdfDoc.numPages}`;
+            }
+            
+            // Update button states
+            document.getElementById('prev-btn').disabled = (pageNum <= 1);
+            document.getElementById('next-btn').disabled = (pageNum >= pdfDoc.numPages);
+        }
+
+        // Queue page render
+        function queueRenderPage(num) {
+            if (pageRendering) {
+                pageNumPending = num;
+            } else {
+                renderPage(num);
+            }
+        }
+
+        // Navigation functions
+        function previousPage() {
+            if (pageNum <= 1) return;
+            if (isDoublePage) {
+                pageNum = Math.max(1, pageNum - 2);
+            } else {
+                pageNum--;
+            }
+            queueRenderPage(pageNum);
+        }
+
+        function nextPage() {
+            if (pageNum >= pdfDoc.numPages) return;
+            if (isDoublePage) {
+                pageNum = Math.min(pdfDoc.numPages, pageNum + 2);
+            } else {
+                pageNum++;
+            }
+            queueRenderPage(pageNum);
+        }
+
+        // Download PDF
+        function downloadPDF() {
+            const link = document.createElement('a');
+            link.href = pdfUrl || PDF_URL;
+            link.download = 'document.pdf';
+            link.click();
+        }
+
+        // Zoom functions
+        function zoomIn() {
+            if (zoomLevel < 3) { // Max 300%
+                zoomLevel += 0.25;
+                updateZoom();
+            }
+        }
+
+        function zoomOut() {
+            if (zoomLevel > 0.5) { // Min 50%
+                zoomLevel -= 0.25;
+                updateZoom();
+            }
+        }
+
+        function updateZoom() {
+            document.getElementById('zoom-level').textContent = Math.round(zoomLevel * 100) + '%';
+            document.getElementById('zoom-in').disabled = (zoomLevel >= 3);
+            document.getElementById('zoom-out').disabled = (zoomLevel <= 0.5);
+            if (pdfDoc) {
+                renderPage(pageNum);
+            }
+        }
+
+        // Layout functions
+        function setSinglePage() {
+            if (isDoublePage) {
+                isDoublePage = false;
+                canvas2.style.display = 'none';
+                document.getElementById('canvas-wrapper').classList.add('single-page');
+                document.getElementById('single-page-btn').classList.add('active');
+                document.getElementById('double-page-btn').classList.remove('active');
+                renderPage(pageNum);
+            }
+        }
+
+        function setDoublePage() {
+            if (!isDoublePage) {
+                isDoublePage = true;
+                canvas2.style.display = 'block';
+                document.getElementById('canvas-wrapper').classList.remove('single-page');
+                document.getElementById('single-page-btn').classList.remove('active');
+                document.getElementById('double-page-btn').classList.add('active');
+                // Adjust to odd page for double page view
+                if (pageNum % 2 === 0) {
+                    pageNum = Math.max(1, pageNum - 1);
+                }
+                renderPage(pageNum);
+            }
+        }
+
+        // Keyboard navigation
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'ArrowLeft') {
+                previousPage();
+            } else if (e.key === 'ArrowRight') {
+                nextPage();
+            } else if (e.key === '+' || e.key === '=') {
+                zoomIn();
+            } else if (e.key === '-' || e.key === '_') {
+                zoomOut();
+            }
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', function() {
+            if (pdfDoc) {
+                renderPage(pageNum);
+            }
+        });
+
+        // Auto-hide control bar
+        let controlBarTimeout;
+        const controlBar = document.getElementById('control-bar');
+        const bottomTrigger = document.getElementById('bottom-trigger');
+
+        document.addEventListener('mousemove', function(e) {
+            // Show control bar when mouse is near bottom (within 80px)
+            if (e.clientY > window.innerHeight - 80) {
+                controlBar.classList.add('visible');
+                clearTimeout(controlBarTimeout);
+            } else {
+                // Hide after 2 seconds of mouse leaving
+                clearTimeout(controlBarTimeout);
+                controlBarTimeout = setTimeout(() => {
+                    controlBar.classList.remove('visible');
+                }, 2000);
+            }
+        });
+
+        // Keep visible when hovering over control bar
+        controlBar.addEventListener('mouseenter', function() {
+            controlBar.classList.add('visible');
+            clearTimeout(controlBarTimeout);
+        });
+
+        controlBar.addEventListener('mouseleave', function() {
+            controlBarTimeout = setTimeout(() => {
+                controlBar.classList.remove('visible');
+            }, 2000);
+        });
+
+        // Mouse drag functionality for zoomed pages
+        const pdfContainer = document.getElementById('pdf-container');
+        const canvasWrapper = document.getElementById('canvas-wrapper');
+
+        canvasWrapper.addEventListener('mousedown', function(e) {
+            // Only enable drag if content is scrollable (zoomed)
+            if (pdfContainer.scrollHeight > pdfContainer.clientHeight || 
+                pdfContainer.scrollWidth > pdfContainer.clientWidth) {
+                isDragging = true;
+                canvasWrapper.classList.add('dragging');
+                startX = e.pageX - pdfContainer.offsetLeft;
+                startY = e.pageY - pdfContainer.offsetTop;
+                scrollLeft = pdfContainer.scrollLeft;
+                scrollTop = pdfContainer.scrollTop;
+                e.preventDefault();
+            }
+        });
+
+        document.addEventListener('mousemove', function(e) {
+            if (!isDragging) return;
+            e.preventDefault();
+            const x = e.pageX - pdfContainer.offsetLeft;
+            const y = e.pageY - pdfContainer.offsetTop;
+            const walkX = (x - startX) * 1.5; // Multiply for faster drag
+            const walkY = (y - startY) * 1.5;
+            pdfContainer.scrollLeft = scrollLeft - walkX;
+            pdfContainer.scrollTop = scrollTop - walkY;
+        });
+
+        document.addEventListener('mouseup', function() {
+            if (isDragging) {
+                isDragging = false;
+                canvasWrapper.classList.remove('dragging');
+            }
+        });
+
+        canvasWrapper.addEventListener('mouseleave', function() {
+            if (isDragging) {
+                isDragging = false;
+                canvasWrapper.classList.remove('dragging');
+            }
+        });
+
+        // Initialize - Try to load PDF or prompt for file
+        if (PDF_URL && PDF_URL !== 'YOUR_PDF_URL_HERE') {
+            pdfUrl = PDF_URL;
+            initPDF(PDF_URL);
+        } else {
+            document.getElementById('loading').textContent = 'Click here to select a PDF file';
+            document.getElementById('loading').style.cursor = 'pointer';
+            document.getElementById('loading').onclick = loadPDFFromInput;
+        }
+    </script>
+</body>
+</html>
