@@ -263,6 +263,12 @@
         <div class="divider"></div>
 
         <div class="control-group">
+            <button class="icon-btn" id="fullscreen-btn" onclick="toggleFullscreen()" title="Fullscreen">⛶</button>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="control-group">
             <button id="download-btn" onclick="downloadPDF()">📥 Download</button>
         </div>
     </div>
@@ -500,6 +506,31 @@
             link.download = 'document.pdf';
             link.click();
         }
+
+        // Fullscreen toggle
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    console.error('Error attempting to enable fullscreen:', err);
+                });
+            } else {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen();
+                }
+            }
+        }
+
+        // Update fullscreen button appearance
+        document.addEventListener('fullscreenchange', function() {
+            const fullscreenBtn = document.getElementById('fullscreen-btn');
+            if (document.fullscreenElement) {
+                fullscreenBtn.textContent = '⛶';
+                fullscreenBtn.title = 'Exit Fullscreen';
+            } else {
+                fullscreenBtn.textContent = '⛶';
+                fullscreenBtn.title = 'Fullscreen';
+            }
+        });
 
         // Zoom functions
         function zoomIn() {
